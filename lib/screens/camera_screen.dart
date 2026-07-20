@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import '../utils/folder_manager.dart';
+import '../widgets/app_image_widget.dart';
 
 class CameraScreen extends StatefulWidget {
   final Directory folderDirectory;
@@ -322,8 +324,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(6),
                           child: _lastPhotoCaptured != null
-                              ? Image.file(
-                                  _lastPhotoCaptured!,
+                              ? AppImageWidget(
+                                  file: _lastPhotoCaptured!,
                                   fit: BoxFit.cover,
                                 )
                               : const Icon(Icons.image, color: Colors.white54),

@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../utils/folder_manager.dart';
+import '../widgets/app_image_widget.dart';
 import 'camera_screen.dart';
 import 'image_editor_screen.dart';
 import 'package:share_plus/share_plus.dart';
@@ -419,8 +421,8 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                                         Positioned.fill(
                                           child: ClipRRect(
                                             borderRadius: BorderRadius.circular(8),
-                                            child: Image.file(
-                                              file,
+                                            child: AppImageWidget(
+                                              file: file,
                                               fit: BoxFit.cover,
                                             ),
                                           ),
@@ -620,9 +622,9 @@ class _ImagePreviewScreenState extends State<ImagePreviewScreen> {
       body: Center(
         child: InteractiveViewer(
           maxScale: 4.0,
-          child: Image.file(
-            _currentFile,
-            key: ValueKey(_currentFile.lastModifiedSync()), // Force reload on update
+          child: AppImageWidget(
+            file: _currentFile,
+            key: ValueKey(_currentFile.path),
             fit: BoxFit.contain,
           ),
         ),

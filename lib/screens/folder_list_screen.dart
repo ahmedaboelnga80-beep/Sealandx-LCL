@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../utils/folder_manager.dart';
@@ -22,6 +23,19 @@ class _FolderListScreenState extends State<FolderListScreen> {
   final List<String> _companies = ['SACO', 'ROYAL', 'MESCO', 'EFS'];
   int _currentTabIndex = 0;
 
+  DateTime _getModifiedDate(FileSystemEntity entity) {
+    if (kIsWeb) return DateTime.now();
+    try {
+      return entity.statSync().modified;
+    } catch (_) {
+      return DateTime.now();
+    }
+  }
+
+  String _getFolderName(String path) {
+    return path.split(RegExp(r'[/\\]')).last;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -34,21 +48,19 @@ class _FolderListScreenState extends State<FolderListScreen> {
       final company = _companies[_currentTabIndex];
       final list = await FolderManager.getFolders(company: company);
       if (mounted) {
-        // Group by modification date (yyyy-MM-dd)
         final Map<String, List<FileSystemEntity>> groupedByDate = {};
         for (final entity in list) {
-          final stat = entity.statSync();
-          final dateStr = DateFormat('yyyy-MM-dd').format(stat.modified);
+          final modified = _getModifiedDate(entity);
+          final dateStr = DateFormat('yyyy-MM-dd').format(modified);
           groupedByDate.putIfAbsent(dateStr, () => []).add(entity);
         }
 
-        // For each date, sort chronologically (oldest modified first) and assign index
         final Map<String, int> dailyNumbers = {};
         groupedByDate.forEach((dateStr, entities) {
           entities.sort((a, b) {
-            final aStat = a.statSync();
-            final bStat = b.statSync();
-            return aStat.modified.compareTo(bStat.modified);
+            final aMod = _getModifiedDate(a);
+            final bMod = _getModifiedDate(b);
+            return aMod.compareTo(bMod);
           });
           
           for (int i = 0; i < entities.length; i++) {
@@ -591,7 +603,7 @@ class _FolderListScreenState extends State<FolderListScreen> {
                             itemBuilder: (context, index) {
                               final entity = _filteredFolders[index];
                               final folder = Directory(entity.path);
-                              final folderName = folder.path.split(Platform.pathSeparator).last;
+                              final folderName = _getFolderName(folder.path);
                               
                               // Extract Container size/tag
                               String sizeTag = '';
@@ -601,8 +613,8 @@ class _FolderListScreenState extends State<FolderListScreen> {
                               }
 
                               final images = FolderManager.getImages(folder);
-                              final stat = folder.statSync();
-                              final dateStr = DateFormat('yyyy/MM/dd HH:mm').format(stat.modified);
+                              final modifiedDate = _getModifiedDate(folder);
+                              final dateStr = DateFormat('yyyy/MM/dd HH:mm').format(modifiedDate);
 
                               Color tagColor = const Color(0xFF009688);
                               final folderNumber = _folderDailyNumbers[folder.path] ?? 1;
