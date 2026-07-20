@@ -9,14 +9,18 @@ import 'utils/folder_manager.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await FolderManager.init();
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-  } catch (e) {
-    debugPrint('Firebase initialization warning: $e');
-  }
   runApp(const MyApp());
+
+  // Non-blocking Firebase initialization
+  try {
+    Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    ).catchError((e) {
+      debugPrint('Firebase init warning: $e');
+    });
+  } catch (e) {
+    debugPrint('Firebase init warning: $e');
+  }
 }
 
 class MyApp extends StatelessWidget {
