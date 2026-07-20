@@ -154,11 +154,13 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     }
   }
 
+  String _getFolderName(String path) => path.split(RegExp(r'[/\\]')).last;
+
   Future<void> _shareSelectedImages() async {
     if (_selectedImages.isEmpty) return;
     
     final xFiles = _selectedImages.map((img) => XFile(img.path)).toList();
-    final folderName = widget.folderDirectory.path.split(Platform.pathSeparator).last;
+    final folderName = _getFolderName(widget.folderDirectory.path);
     
     await Share.shareXFiles(
       xFiles,
@@ -180,13 +182,13 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     setState(() => _isExporting = true);
     
     try {
-      final folderName = widget.folderDirectory.path.split(Platform.pathSeparator).last;
+      final folderName = _getFolderName(widget.folderDirectory.path);
       final nameParts = folderName.split(' - ');
       final containerNo = nameParts.first;
 
       // Determine company
       String company = widget.company ?? 'SACO';
-      final pathParts = widget.folderDirectory.path.split(Platform.pathSeparator);
+      final pathParts = widget.folderDirectory.path.split(RegExp(r'[/\\]'));
       if (pathParts.length >= 2) {
         final dirName = pathParts[pathParts.length - 2];
         if (['SACO', 'ROYAL', 'MESCO', 'EFS'].contains(dirName.toUpperCase())) {
@@ -228,7 +230,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final folderName = widget.folderDirectory.path.split(Platform.pathSeparator).last;
+    final folderName = _getFolderName(widget.folderDirectory.path);
     final currentImages = _currentSubTabIndex == 0 ? _yardImages : _cargoImages;
 
     return DefaultTabController(

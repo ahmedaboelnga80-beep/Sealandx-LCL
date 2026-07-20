@@ -95,7 +95,7 @@ class _FolderListScreenState extends State<FolderListScreen> {
     final lowerQuery = query.toLowerCase();
     setState(() {
       _filteredFolders = _folders.where((entity) {
-        final name = entity.path.split(Platform.pathSeparator).last.toLowerCase();
+        final name = _getFolderName(entity.path).toLowerCase();
         return name.contains(lowerQuery);
       }).toList();
     });
@@ -284,7 +284,7 @@ class _FolderListScreenState extends State<FolderListScreen> {
   }
 
   Future<void> _deleteFolder(Directory folder) async {
-    final folderName = folder.path.split(Platform.pathSeparator).last;
+    final folderName = _getFolderName(folder.path);
     final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -318,7 +318,7 @@ class _FolderListScreenState extends State<FolderListScreen> {
   }
 
   Future<void> _showRenameFolderDialog(Directory folder) async {
-    final folderName = folder.path.split(Platform.pathSeparator).last;
+    final folderName = _getFolderName(folder.path);
     
     // Parse current name and type
     String name = folderName;
@@ -329,7 +329,7 @@ class _FolderListScreenState extends State<FolderListScreen> {
       name = nameParts.sublist(0, nameParts.length - 1).join(' - ');
     }
 
-    final pathParts = folder.path.split(Platform.pathSeparator);
+    final pathParts = folder.path.split(RegExp(r'[/\\]'));
     String company = _companies[_currentTabIndex];
     if (pathParts.length >= 2) {
       final dirName = pathParts[pathParts.length - 2];
