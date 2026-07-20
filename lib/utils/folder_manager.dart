@@ -565,7 +565,10 @@ class FolderManager {
       newArchive.addFile(ArchiveFile.bytes(mediaPath, imgBytes));
     });
 
-    final outputBytes = ZipEncoder().encode(newArchive)!;
+    final outputBytes = ZipEncoder().encode(newArchive);
+    if (outputBytes == null) {
+      throw Exception('فشل تشفير ملف Word.');
+    }
 
     if (!kIsWeb) {
       final outputFilePath = p.join(outerDir.path, '${containerNo.trim()}.docx');
