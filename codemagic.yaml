@@ -7,8 +7,6 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
-      groups:
-        - app_store_credentials # Configure in Codemagic UI if using App Store Connect / Code Signing
     scripts:
       - name: Set up CocoaPods dependencies
         script: |
@@ -22,11 +20,3 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
-      - build/ios/outputs/flutter-apk/*.apk
-    publishing:
-      email:
-        recipients:
-          - owner@sealandx.com
-        notify:
-          on_success: true
-          on_failure: true
