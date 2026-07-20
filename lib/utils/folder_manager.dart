@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
 
 class FolderManager {
   static const String _baseFolderName = 'LCLScans';
@@ -61,33 +62,11 @@ class FolderManager {
     return rootDir;
   }
 
-  /// Lists scanned folders.
+  /// Lists scanned folders INSTANTLY from local storage.
   static Future<List<FileSystemEntity>> getFolders({String? company}) async {
     final List<Directory> directories = [];
 
-    // 1. Try Firebase Firestore first if configured
-    if (_isFirebaseAvailable) {
-      try {
-        Query query = FirebaseFirestore.instance.collection('folders');
-        if (company != null) {
-          query = query.where('company', isEqualTo: company);
-        }
-        final snapshot = await query.get();
-        for (var doc in snapshot.docs) {
-          final data = doc.data() as Map<String, dynamic>;
-          final folderPath = data['path'] as String? ?? doc.id;
-          directories.add(Directory(folderPath));
-        }
-
-        if (directories.isNotEmpty) {
-          return directories;
-        }
-      } catch (e) {
-        debugPrint('Firestore query fallback: $e');
-      }
-    }
-
-    // 2. Web storage fallback
+    // 1. Web storage (Instant SharedPreferences)
     if (kIsWeb) {
       final sp = await prefs;
       final String? jsonStr = sp.getString('web_folders_store');
@@ -105,7 +84,7 @@ class FolderManager {
       return directories;
     }
 
-    // 3. Local disk storage (Mobile/Desktop)
+    // 2. Local disk storage (Mobile/Desktop)
     final rootDir = await getRootDirectory();
     final targetDir = company != null ? Directory(p.join(rootDir.path, company)) : rootDir;
     if (!await targetDir.exists()) return [];
@@ -133,29 +112,12 @@ class FolderManager {
     return directories;
   }
 
-  /// Creates a folder structure.
+  /// Creates a folder structure INSTANTLY.
   static Future<Directory> createFolder(String name, String type, String company) async {
     final folderName = '${name.trim()} - ${type.trim()}';
     final outerPath = '$company/$folderName';
 
-    // 1. Firebase Firestore sync
-    if (_isFirebaseAvailable) {
-      try {
-        final docRef = FirebaseFirestore.instance.collection('folders').doc(outerPath.replaceAll('/', '_'));
-        await docRef.set({
-          'name': name.trim(),
-          'type': type.trim(),
-          'company': company,
-          'path': outerPath,
-          'created_at': FieldValue.serverTimestamp(),
-          'modified': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-      } catch (e) {
-        debugPrint('Firestore create folder error: $e');
-      }
-    }
-
-    // 2. Web storage
+    // 1. Web storage (Instant)
     if (kIsWeb) {
       final sp = await prefs;
       final String? jsonStr = sp.getString('web_folders_store');
@@ -174,10 +136,27 @@ class FolderManager {
         await sp.setString('web_folders_store', json.encode(list));
       }
 
+      // Background Firestore sync (non-blocking)
+      if (_isFirebaseAvailable) {
+        FirebaseFirestore.instance
+            .collection('folders')
+            .doc(outerPath.replaceAll('/', '_'))
+            .set({
+          'name': name.trim(),
+          'type': type.trim(),
+          'company': company,
+          'path': outerPath,
+          'created_at': FieldValue.serverTimestamp(),
+          'modified': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true)).catchError((e) {
+          debugPrint('Background Firestore create folder error: $e');
+        });
+      }
+
       return Directory(outerPath);
     }
 
-    // 3. Local disk
+    // 2. Local disk
     final rootDir = await getRootDirectory();
     final companyPath = p.join(rootDir.path, company);
     final companyDir = Directory(companyPath);
@@ -205,12 +184,11 @@ class FolderManager {
     return Directory(p.join(outerDir.path, folderName));
   }
 
-  /// Lists images in a folder.
+  /// Lists images in a folder INSTANTLY.
   static List<File> getImages(Directory outerDir, {String? category}) {
     final folderPath = outerDir.path;
     final List<File> files = [];
 
-    // SharedPreferences / Web / Firebase URL cache lookup
     final sp = _prefs;
     if (sp != null) {
       void addCategory(String cat) {
@@ -271,44 +249,12 @@ class FolderManager {
     }
   }
 
-  /// Saves a new image from XFile (cross-platform safe for Web, Mobile & Firebase).
+  /// Saves a new image from XFile INSTANTLY.
   static Future<File> saveImageXFile(Directory outerDir, XFile xFile, {required String category}) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final folderPath = outerDir.path;
     final bytes = await xFile.readAsBytes();
 
-    // 1. Try Firebase Storage upload first if available
-    if (_isFirebaseAvailable) {
-      try {
-        final storageRef = FirebaseStorage.instance
-            .ref()
-            .child('scans/${folderPath.replaceAll('/', '_')}/$category/IMG_$timestamp.jpg');
-
-        final uploadTask = await storageRef.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
-        final downloadUrl = await uploadTask.ref.getDownloadURL();
-
-        // Save URL in SharedPreferences list
-        final sp = await prefs;
-        final listKey = 'web_imgs_${folderPath}_$category';
-        List<String> imgKeys = sp.getStringList(listKey) ?? [];
-        imgKeys.add(downloadUrl);
-        await sp.setStringList(listKey, imgKeys);
-
-        // Firestore record
-        final docRef = FirebaseFirestore.instance.collection('folders').doc(folderPath.replaceAll('/', '_'));
-        await docRef.collection('images').add({
-          'url': downloadUrl,
-          'category': category,
-          'timestamp': timestamp,
-        });
-
-        return File(downloadUrl);
-      } catch (e) {
-        debugPrint('Firebase Storage upload error: $e');
-      }
-    }
-
-    // 2. Web fallback
     if (kIsWeb) {
       final sp = await prefs;
       final imageKey = 'web_img_${folderPath}_${category}_$timestamp';
@@ -323,7 +269,6 @@ class FolderManager {
       return File(imageKey);
     }
 
-    // 3. Local disk
     final innerDir = getInnerDirectory(outerDir);
     final categoryDir = Directory(p.join(innerDir.path, category));
     if (!await categoryDir.exists()) {
@@ -380,15 +325,6 @@ class FolderManager {
 
   /// Deletes the folder.
   static Future<void> deleteFolder(Directory outerDir) async {
-    if (_isFirebaseAvailable) {
-      try {
-        final docRef = FirebaseFirestore.instance.collection('folders').doc(outerDir.path.replaceAll('/', '_'));
-        await docRef.delete();
-      } catch (e) {
-        debugPrint('Firestore delete folder error: $e');
-      }
-    }
-
     if (kIsWeb) {
       final sp = await prefs;
       final String? jsonStr = sp.getString('web_folders_store');
@@ -409,21 +345,6 @@ class FolderManager {
   static Future<Directory> renameFolder(Directory outerDir, String newName, String newType, String company) async {
     final newFolderName = '${newName.trim()} - ${newType.trim()}';
     final targetOuterPath = '$company/$newFolderName';
-
-    if (_isFirebaseAvailable) {
-      try {
-        final docRef = FirebaseFirestore.instance.collection('folders').doc(outerDir.path.replaceAll('/', '_'));
-        await docRef.update({
-          'name': newName.trim(),
-          'type': newType.trim(),
-          'company': company,
-          'path': targetOuterPath,
-          'modified': FieldValue.serverTimestamp(),
-        });
-      } catch (e) {
-        debugPrint('Firestore rename error: $e');
-      }
-    }
 
     if (kIsWeb) {
       final sp = await prefs;
@@ -584,7 +505,6 @@ class FolderManager {
 
       Uint8List? imgBytes;
       if (imgFile.path.startsWith('http')) {
-        // Download network image byte data for DOCX embedding
         imgBytes = null;
       } else if (kIsWeb) {
         imgBytes = getWebImageBytes(imgFile.path);

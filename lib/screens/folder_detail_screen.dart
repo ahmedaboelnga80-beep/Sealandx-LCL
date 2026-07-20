@@ -72,6 +72,29 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     }
   }
 
+  Future<void> _pickFromCamera() async {
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? photo = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+      );
+      if (photo != null) {
+        setState(() => _isLoading = true);
+        final category = _currentSubTabIndex == 0 ? 'yard' : 'cargo';
+        await FolderManager.saveImageXFile(widget.folderDirectory, photo, category: category);
+        _loadImages();
+      }
+    } catch (e) {
+      debugPrint('Error capturing from camera: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ أثناء التقاط الصورة: $e', style: const TextStyle(fontFamily: 'Cairo'))),
+        );
+      }
+    }
+  }
+
   Future<void> _pickFromGallery() async {
     try {
       final ImagePicker picker = ImagePicker();
@@ -493,10 +516,10 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                           children: [
                             ListTile(
                               leading: const Icon(Icons.camera_alt, color: Colors.tealAccent),
-                              title: const Text('التصوير المتتابع (الكاميرا)', style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+                              title: const Text('التقاط صورة بالكاميرا', style: TextStyle(fontFamily: 'Cairo', color: Colors.white, fontWeight: FontWeight.bold)),
                               onTap: () {
                                 Navigator.pop(context);
-                                _openContinuousCamera();
+                                _pickFromCamera();
                               },
                             ),
                             ListTile(
@@ -505,6 +528,14 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                               onTap: () {
                                 Navigator.pop(context);
                                 _pickFromGallery();
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.motion_photos_on, color: Colors.cyanAccent),
+                              title: const Text('التصوير المتتابع السريع', style: TextStyle(fontFamily: 'Cairo', color: Colors.white70)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                _openContinuousCamera();
                               },
                             ),
                           ],
