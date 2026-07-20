@@ -4,8 +4,11 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/login_screen.dart';
 
+import 'utils/folder_manager.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await FolderManager.init();
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,

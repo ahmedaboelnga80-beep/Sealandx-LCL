@@ -77,7 +77,9 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       final ImagePicker picker = ImagePicker();
       final XFile? photo = await picker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 85,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 75,
       );
       if (photo != null) {
         setState(() => _isLoading = true);
@@ -98,7 +100,11 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   Future<void> _pickFromGallery() async {
     try {
       final ImagePicker picker = ImagePicker();
-      final List<XFile> rawImages = await picker.pickMultiImage();
+      final List<XFile> rawImages = await picker.pickMultiImage(
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 75,
+      );
       
       if (rawImages.isNotEmpty) {
         setState(() => _isLoading = true);

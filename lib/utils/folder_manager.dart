@@ -17,10 +17,15 @@ import 'package:image_picker/image_picker.dart';
 class FolderManager {
   static const String _baseFolderName = 'LCLScans';
   static SharedPreferences? _prefs;
+  static final Map<String, Uint8List> _webInMemoryImages = {};
 
   static Future<SharedPreferences> get prefs async {
     _prefs ??= await SharedPreferences.getInstance();
     return _prefs!;
+  }
+
+  static Future<void> init() async {
+    _prefs ??= await SharedPreferences.getInstance();
   }
 
   static bool get _isFirebaseAvailable {
@@ -66,7 +71,6 @@ class FolderManager {
   static Future<List<FileSystemEntity>> getFolders({String? company}) async {
     final List<Directory> directories = [];
 
-    // 1. Web storage (Instant SharedPreferences)
     if (kIsWeb) {
       final sp = await prefs;
       final String? jsonStr = sp.getString('web_folders_store');
@@ -84,7 +88,6 @@ class FolderManager {
       return directories;
     }
 
-    // 2. Local disk storage (Mobile/Desktop)
     final rootDir = await getRootDirectory();
     final targetDir = company != null ? Directory(p.join(rootDir.path, company)) : rootDir;
     if (!await targetDir.exists()) return [];
@@ -117,7 +120,6 @@ class FolderManager {
     final folderName = '${name.trim()} - ${type.trim()}';
     final outerPath = '$company/$folderName';
 
-    // 1. Web storage (Instant)
     if (kIsWeb) {
       final sp = await prefs;
       final String? jsonStr = sp.getString('web_folders_store');
@@ -136,7 +138,6 @@ class FolderManager {
         await sp.setString('web_folders_store', json.encode(list));
       }
 
-      // Background Firestore sync (non-blocking)
       if (_isFirebaseAvailable) {
         FirebaseFirestore.instance
             .collection('folders')
@@ -156,7 +157,6 @@ class FolderManager {
       return Directory(outerPath);
     }
 
-    // 2. Local disk
     final rootDir = await getRootDirectory();
     final companyPath = p.join(rootDir.path, company);
     final companyDir = Directory(companyPath);
@@ -239,11 +239,17 @@ class FolderManager {
 
   /// Gets raw image bytes on Web for a stored image key.
   static Uint8List? getWebImageBytes(String imageKey) {
+    if (_webInMemoryImages.containsKey(imageKey)) {
+      return _webInMemoryImages[imageKey];
+    }
+
     if (_prefs == null) return null;
     final base64Str = _prefs!.getString(imageKey);
     if (base64Str == null) return null;
     try {
-      return base64Decode(base64Str);
+      final bytes = base64Decode(base64Str);
+      _webInMemoryImages[imageKey] = bytes;
+      return bytes;
     } catch (_) {
       return null;
     }
@@ -258,13 +264,24 @@ class FolderManager {
     if (kIsWeb) {
       final sp = await prefs;
       final imageKey = 'web_img_${folderPath}_${category}_$timestamp';
-      final base64Str = base64Encode(bytes);
-      await sp.setString(imageKey, base64Str);
+      
+      // Store in high-performance memory cache
+      _webInMemoryImages[imageKey] = bytes;
 
       final listKey = 'web_imgs_${folderPath}_$category';
       List<String> imgKeys = sp.getStringList(listKey) ?? [];
-      imgKeys.add(imageKey);
-      await sp.setStringList(listKey, imgKeys);
+      if (!imgKeys.contains(imageKey)) {
+        imgKeys.add(imageKey);
+        await sp.setStringList(listKey, imgKeys);
+      }
+
+      // Try storing in LocalStorage asynchronously
+      try {
+        final base64Str = base64Encode(bytes);
+        await sp.setString(imageKey, base64Str);
+      } catch (e) {
+        debugPrint('Web local storage quota exceeded, saved in memory: $e');
+      }
 
       return File(imageKey);
     }
@@ -299,13 +316,21 @@ class FolderManager {
         bytes = await tempFile.readAsBytes();
       }
 
-      final base64Str = base64Encode(bytes);
-      await sp.setString(imageKey, base64Str);
+      _webInMemoryImages[imageKey] = bytes;
 
       final listKey = 'web_imgs_${folderPath}_$category';
       List<String> imgKeys = sp.getStringList(listKey) ?? [];
-      imgKeys.add(imageKey);
-      await sp.setStringList(listKey, imgKeys);
+      if (!imgKeys.contains(imageKey)) {
+        imgKeys.add(imageKey);
+        await sp.setStringList(listKey, imgKeys);
+      }
+
+      try {
+        final base64Str = base64Encode(bytes);
+        await sp.setString(imageKey, base64Str);
+      } catch (e) {
+        debugPrint('Web local storage quota exceeded, saved in memory: $e');
+      }
 
       return File(imageKey);
     }
