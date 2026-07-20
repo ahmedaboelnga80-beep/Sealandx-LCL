@@ -16,18 +16,28 @@ class AppImageWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) {
-      final path = file.path;
-      if (path.startsWith('data:') || path.startsWith('blob:') || path.startsWith('http')) {
-        return Image.network(path, fit: fit);
-      }
-      final Uint8List? bytes = FolderManager.getWebImageBytes(path);
-      if (bytes != null && bytes.isNotEmpty) {
-        return Image.memory(bytes, fit: fit);
-      }
+    final path = file.path;
+
+    if (path.startsWith('http://') ||
+        path.startsWith('https://') ||
+        path.startsWith('gs://') ||
+        path.startsWith('data:') ||
+        path.startsWith('blob:')) {
       return Image.network(
         path,
         fit: fit,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Container(
+            color: Colors.black26,
+            child: const Center(
+              child: CircularProgressIndicator(
+                color: Color(0xFF009688),
+                strokeWidth: 2,
+              ),
+            ),
+          );
+        },
         errorBuilder: (context, error, stackTrace) {
           return Container(
             color: Colors.black26,
@@ -38,6 +48,14 @@ class AppImageWidget extends StatelessWidget {
         },
       );
     }
+
+    if (kIsWeb) {
+      final Uint8List? bytes = FolderManager.getWebImageBytes(path);
+      if (bytes != null && bytes.isNotEmpty) {
+        return Image.memory(bytes, fit: fit);
+      }
+    }
+
     return Image.file(file, fit: fit);
   }
 }

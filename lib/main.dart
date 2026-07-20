@@ -1,9 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 import 'screens/login_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    debugPrint('Firebase initialization warning: $e');
+  }
   runApp(const MyApp());
 }
 
@@ -23,7 +32,6 @@ class MyApp extends StatelessWidget {
           brightness: Brightness.dark,
           primary: const Color(0xFF009688),
           secondary: const Color(0xFF004D40),
-          background: const Color(0xFF001e18),
           surface: const Color(0xFF00382E),
         ),
         cardTheme: CardThemeData(

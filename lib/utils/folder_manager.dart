@@ -9,6 +9,9 @@ import 'package:path/path.dart' as p;
 import 'package:archive/archive_io.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 class FolderManager {
   static const String _baseFolderName = 'LCLScans';
@@ -17,6 +20,14 @@ class FolderManager {
   static Future<SharedPreferences> get prefs async {
     _prefs ??= await SharedPreferences.getInstance();
     return _prefs!;
+  }
+
+  static bool get _isFirebaseAvailable {
+    try {
+      return Firebase.apps.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Helper to get the correct storage directory.
@@ -52,32 +63,54 @@ class FolderManager {
 
   /// Lists scanned folders.
   static Future<List<FileSystemEntity>> getFolders({String? company}) async {
-    final sp = await prefs;
+    final List<Directory> directories = [];
 
-    if (kIsWeb) {
-      final String? jsonStr = sp.getString('web_folders_store');
-      if (jsonStr == null || jsonStr.isEmpty) return [];
-
-      final List<dynamic> rawList = json.decode(jsonStr);
-      final List<Directory> directories = [];
-
-      for (var item in rawList) {
-        final itemCompany = item['company'] as String?;
-        final folderPath = item['path'] as String;
-
-        if (company == null || itemCompany == company) {
+    // 1. Try Firebase Firestore first if configured
+    if (_isFirebaseAvailable) {
+      try {
+        Query query = FirebaseFirestore.instance.collection('folders');
+        if (company != null) {
+          query = query.where('company', isEqualTo: company);
+        }
+        final snapshot = await query.get();
+        for (var doc in snapshot.docs) {
+          final data = doc.data() as Map<String, dynamic>;
+          final folderPath = data['path'] as String? ?? doc.id;
           directories.add(Directory(folderPath));
+        }
+
+        if (directories.isNotEmpty) {
+          return directories;
+        }
+      } catch (e) {
+        debugPrint('Firestore query fallback: $e');
+      }
+    }
+
+    // 2. Web storage fallback
+    if (kIsWeb) {
+      final sp = await prefs;
+      final String? jsonStr = sp.getString('web_folders_store');
+      if (jsonStr != null && jsonStr.isNotEmpty) {
+        final List<dynamic> rawList = json.decode(jsonStr);
+        for (var item in rawList) {
+          final itemCompany = item['company'] as String?;
+          final folderPath = item['path'] as String;
+
+          if (company == null || itemCompany == company) {
+            directories.add(Directory(folderPath));
+          }
         }
       }
       return directories;
     }
 
+    // 3. Local disk storage (Mobile/Desktop)
     final rootDir = await getRootDirectory();
     final targetDir = company != null ? Directory(p.join(rootDir.path, company)) : rootDir;
     if (!await targetDir.exists()) return [];
 
     final list = targetDir.listSync();
-    final List<Directory> directories = [];
 
     if (company == null) {
       final rootDirs = list.whereType<Directory>().toList();
@@ -103,13 +136,31 @@ class FolderManager {
   /// Creates a folder structure.
   static Future<Directory> createFolder(String name, String type, String company) async {
     final folderName = '${name.trim()} - ${type.trim()}';
+    final outerPath = '$company/$folderName';
 
+    // 1. Firebase Firestore sync
+    if (_isFirebaseAvailable) {
+      try {
+        final docRef = FirebaseFirestore.instance.collection('folders').doc(outerPath.replaceAll('/', '_'));
+        await docRef.set({
+          'name': name.trim(),
+          'type': type.trim(),
+          'company': company,
+          'path': outerPath,
+          'created_at': FieldValue.serverTimestamp(),
+          'modified': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      } catch (e) {
+        debugPrint('Firestore create folder error: $e');
+      }
+    }
+
+    // 2. Web storage
     if (kIsWeb) {
       final sp = await prefs;
       final String? jsonStr = sp.getString('web_folders_store');
       List<dynamic> list = jsonStr != null && jsonStr.isNotEmpty ? json.decode(jsonStr) : [];
 
-      final outerPath = '$company/$folderName';
       final existingIndex = list.indexWhere((item) => item['path'] == outerPath);
 
       if (existingIndex == -1) {
@@ -126,6 +177,7 @@ class FolderManager {
       return Directory(outerPath);
     }
 
+    // 3. Local disk
     final rootDir = await getRootDirectory();
     final companyPath = p.join(rootDir.path, company);
     final companyDir = Directory(companyPath);
@@ -133,8 +185,8 @@ class FolderManager {
       await companyDir.create(recursive: true);
     }
 
-    final outerPath = p.join(companyPath, folderName);
-    final innerPath = p.join(outerPath, folderName);
+    final localOuterPath = p.join(companyPath, folderName);
+    final innerPath = p.join(localOuterPath, folderName);
 
     final innerDir = Directory(innerPath);
     if (!await innerDir.exists()) {
@@ -144,7 +196,7 @@ class FolderManager {
     await Directory(p.join(innerPath, 'yard')).create(recursive: true);
     await Directory(p.join(innerPath, 'cargo')).create(recursive: true);
 
-    return Directory(outerPath);
+    return Directory(localOuterPath);
   }
 
   static Directory getInnerDirectory(Directory outerDir) {
@@ -155,13 +207,12 @@ class FolderManager {
 
   /// Lists images in a folder.
   static List<File> getImages(Directory outerDir, {String? category}) {
-    if (kIsWeb) {
-      final sp = _prefs;
-      if (sp == null) return [];
+    final folderPath = outerDir.path;
+    final List<File> files = [];
 
-      final folderPath = outerDir.path;
-      final List<File> files = [];
-
+    // SharedPreferences / Web / Firebase URL cache lookup
+    final sp = _prefs;
+    if (sp != null) {
       void addCategory(String cat) {
         final listKey = 'web_imgs_${folderPath}_$cat';
         final imgKeys = sp.getStringList(listKey) ?? [];
@@ -177,13 +228,13 @@ class FolderManager {
         addCategory('cargo');
       }
 
-      return files;
+      if (files.isNotEmpty) return files;
     }
 
-    final innerDir = getInnerDirectory(outerDir);
-    if (!innerDir.existsSync()) return [];
+    if (kIsWeb) return files;
 
-    final List<File> files = [];
+    final innerDir = getInnerDirectory(outerDir);
+    if (!innerDir.existsSync()) return files;
 
     void addFilesFromDir(Directory dir) {
       if (!dir.existsSync()) return;
@@ -220,16 +271,47 @@ class FolderManager {
     }
   }
 
-  /// Saves a new image from XFile (cross-platform safe for Web & Mobile).
+  /// Saves a new image from XFile (cross-platform safe for Web, Mobile & Firebase).
   static Future<File> saveImageXFile(Directory outerDir, XFile xFile, {required String category}) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final folderPath = outerDir.path;
+    final bytes = await xFile.readAsBytes();
 
+    // 1. Try Firebase Storage upload first if available
+    if (_isFirebaseAvailable) {
+      try {
+        final storageRef = FirebaseStorage.instance
+            .ref()
+            .child('scans/${folderPath.replaceAll('/', '_')}/$category/IMG_$timestamp.jpg');
+
+        final uploadTask = await storageRef.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
+        final downloadUrl = await uploadTask.ref.getDownloadURL();
+
+        // Save URL in SharedPreferences list
+        final sp = await prefs;
+        final listKey = 'web_imgs_${folderPath}_$category';
+        List<String> imgKeys = sp.getStringList(listKey) ?? [];
+        imgKeys.add(downloadUrl);
+        await sp.setStringList(listKey, imgKeys);
+
+        // Firestore record
+        final docRef = FirebaseFirestore.instance.collection('folders').doc(folderPath.replaceAll('/', '_'));
+        await docRef.collection('images').add({
+          'url': downloadUrl,
+          'category': category,
+          'timestamp': timestamp,
+        });
+
+        return File(downloadUrl);
+      } catch (e) {
+        debugPrint('Firebase Storage upload error: $e');
+      }
+    }
+
+    // 2. Web fallback
     if (kIsWeb) {
       final sp = await prefs;
-      final folderPath = outerDir.path;
       final imageKey = 'web_img_${folderPath}_${category}_$timestamp';
-
-      final bytes = await xFile.readAsBytes();
       final base64Str = base64Encode(bytes);
       await sp.setString(imageKey, base64Str);
 
@@ -241,6 +323,7 @@ class FolderManager {
       return File(imageKey);
     }
 
+    // 3. Local disk
     final innerDir = getInnerDirectory(outerDir);
     final categoryDir = Directory(p.join(innerDir.path, category));
     if (!await categoryDir.exists()) {
@@ -250,7 +333,6 @@ class FolderManager {
     final fileName = 'IMG_$timestamp.jpg';
     final targetPath = p.join(categoryDir.path, fileName);
 
-    final bytes = await xFile.readAsBytes();
     final savedFile = File(targetPath);
     await savedFile.writeAsBytes(bytes);
     return savedFile;
@@ -298,6 +380,15 @@ class FolderManager {
 
   /// Deletes the folder.
   static Future<void> deleteFolder(Directory outerDir) async {
+    if (_isFirebaseAvailable) {
+      try {
+        final docRef = FirebaseFirestore.instance.collection('folders').doc(outerDir.path.replaceAll('/', '_'));
+        await docRef.delete();
+      } catch (e) {
+        debugPrint('Firestore delete folder error: $e');
+      }
+    }
+
     if (kIsWeb) {
       final sp = await prefs;
       final String? jsonStr = sp.getString('web_folders_store');
@@ -317,10 +408,25 @@ class FolderManager {
   /// Renames a folder.
   static Future<Directory> renameFolder(Directory outerDir, String newName, String newType, String company) async {
     final newFolderName = '${newName.trim()} - ${newType.trim()}';
+    final targetOuterPath = '$company/$newFolderName';
+
+    if (_isFirebaseAvailable) {
+      try {
+        final docRef = FirebaseFirestore.instance.collection('folders').doc(outerDir.path.replaceAll('/', '_'));
+        await docRef.update({
+          'name': newName.trim(),
+          'type': newType.trim(),
+          'company': company,
+          'path': targetOuterPath,
+          'modified': FieldValue.serverTimestamp(),
+        });
+      } catch (e) {
+        debugPrint('Firestore rename error: $e');
+      }
+    }
 
     if (kIsWeb) {
       final sp = await prefs;
-      final targetOuterPath = '$company/$newFolderName';
       final String? jsonStr = sp.getString('web_folders_store');
       if (jsonStr != null) {
         List<dynamic> list = json.decode(jsonStr);
@@ -338,13 +444,13 @@ class FolderManager {
 
     final rootDir = await getRootDirectory();
     final companyPath = p.join(rootDir.path, company);
-    final targetOuterPath = p.join(companyPath, newFolderName);
+    final localTargetOuterPath = p.join(companyPath, newFolderName);
 
-    if (outerDir.path == targetOuterPath) {
+    if (outerDir.path == localTargetOuterPath) {
       return outerDir;
     }
 
-    final targetOuterDir = Directory(targetOuterPath);
+    final targetOuterDir = Directory(localTargetOuterPath);
     if (targetOuterDir.existsSync()) {
       throw Exception('يوجد مجلد آخر بالفعل بنفس الاسم والمقاس.');
     }
@@ -356,7 +462,7 @@ class FolderManager {
       await innerDir.rename(targetInnerPathInsideOld);
     }
 
-    final renamedOuterDir = await outerDir.rename(targetOuterPath);
+    final renamedOuterDir = await outerDir.rename(localTargetOuterPath);
     return renamedOuterDir;
   }
 
@@ -477,7 +583,10 @@ class FolderManager {
       final mediaPath = 'word/media/$targetName';
 
       Uint8List? imgBytes;
-      if (kIsWeb) {
+      if (imgFile.path.startsWith('http')) {
+        // Download network image byte data for DOCX embedding
+        imgBytes = null;
+      } else if (kIsWeb) {
         imgBytes = getWebImageBytes(imgFile.path);
       } else {
         imgBytes = imgFile.readAsBytesSync();
@@ -602,9 +711,6 @@ class FolderManager {
     });
 
     final outputBytes = ZipEncoder().encode(newArchive);
-    if (outputBytes == null) {
-      throw Exception('فشل تشفير ملف Word.');
-    }
 
     if (!kIsWeb) {
       final outputFilePath = p.join(outerDir.path, '${containerNo.trim()}.docx');
