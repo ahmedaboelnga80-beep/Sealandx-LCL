@@ -220,6 +220,42 @@ class FolderManager {
     }
   }
 
+  /// Saves a new image from XFile (cross-platform safe for Web & Mobile).
+  static Future<File> saveImageXFile(Directory outerDir, XFile xFile, {required String category}) async {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+
+    if (kIsWeb) {
+      final sp = await prefs;
+      final folderPath = outerDir.path;
+      final imageKey = 'web_img_${folderPath}_${category}_$timestamp';
+
+      final bytes = await xFile.readAsBytes();
+      final base64Str = base64Encode(bytes);
+      await sp.setString(imageKey, base64Str);
+
+      final listKey = 'web_imgs_${folderPath}_$category';
+      List<String> imgKeys = sp.getStringList(listKey) ?? [];
+      imgKeys.add(imageKey);
+      await sp.setStringList(listKey, imgKeys);
+
+      return File(imageKey);
+    }
+
+    final innerDir = getInnerDirectory(outerDir);
+    final categoryDir = Directory(p.join(innerDir.path, category));
+    if (!await categoryDir.exists()) {
+      await categoryDir.create(recursive: true);
+    }
+
+    final fileName = 'IMG_$timestamp.jpg';
+    final targetPath = p.join(categoryDir.path, fileName);
+
+    final bytes = await xFile.readAsBytes();
+    final savedFile = File(targetPath);
+    await savedFile.writeAsBytes(bytes);
+    return savedFile;
+  }
+
   /// Saves a new image file.
   static Future<File> saveImageToFolder(Directory outerDir, File tempFile, {required String category}) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;

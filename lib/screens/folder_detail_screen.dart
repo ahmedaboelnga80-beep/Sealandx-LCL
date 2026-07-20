@@ -81,8 +81,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         setState(() => _isLoading = true);
         final category = _currentSubTabIndex == 0 ? 'yard' : 'cargo';
         for (var rawImage in rawImages) {
-          final tempFile = File(rawImage.path);
-          await FolderManager.saveImageToFolder(widget.folderDirectory, tempFile, category: category);
+          await FolderManager.saveImageXFile(widget.folderDirectory, rawImage, category: category);
         }
         _loadImages();
       }

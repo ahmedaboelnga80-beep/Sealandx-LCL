@@ -119,19 +119,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       // Take the picture
       final XFile rawFile = await _controller!.takePicture();
-      final File tempFile = File(rawFile.path);
 
-      // Save using FolderManager (moves to the correct inner container folder)
-      final File savedFile = await FolderManager.saveImageToFolder(
+      // Save using FolderManager (cross-platform safe for Web & Mobile)
+      final File savedFile = await FolderManager.saveImageXFile(
         widget.folderDirectory,
-        tempFile,
+        rawFile,
         category: widget.category,
       );
-
-      // Delete the temporary cache file
-      try {
-        await tempFile.delete();
-      } catch (_) {}
 
       if (mounted) {
         setState(() {
