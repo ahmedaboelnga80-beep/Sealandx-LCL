@@ -42,8 +42,12 @@
             var keysToRemove = [];
             for (var i = 0; i < localStorage.length; i++) {
               var k = localStorage.key(i);
-              if (k && k.indexOf('web_img_') === 0) {
-                keysToRemove.push(k);
+              // Clean only individual base64 images, NEVER delete the list of images (web_imgs_)!
+              if (k && k.indexOf('web_img_') === 0 && k.indexOf('web_imgs_') !== 0) {
+                var val = localStorage.getItem(k);
+                if (val && val.length > 500) {
+                  keysToRemove.push(k);
+                }
               }
             }
             for (var j = 0; j < keysToRemove.length; j++) {
@@ -147,17 +151,21 @@
         });
       },
       compressImage: function(base64, maxDimension, quality) {
-        return new Promise(function(resolve) {
+          var timer = setTimeout(function() {
+            resolve(base64);
+          }, 1500);
+
           try {
             var img = new Image();
             img.onload = function() {
+              clearTimeout(timer);
               var width = img.naturalWidth || img.width;
               var height = img.naturalHeight || img.height;
               if (!width || !height) {
                 resolve(base64);
                 return;
               }
-              if (width <= maxDimension && height <= maxDimension && base64.length < 400000) {
+              if (width <= maxDimension && height <= maxDimension && base64.length < 300000) {
                 resolve(base64);
                 return;
               }
@@ -180,17 +188,29 @@
               resolve(comma !== -1 ? result.substring(comma + 1) : result);
             };
             img.onerror = function() {
+              clearTimeout(timer);
               resolve(base64);
             };
-            img.src = 'data:image/jpeg;base64,' + base64;
+            var mime = 'image/jpeg';
+            if (base64.indexOf('iVBORw0K') === 0) mime = 'image/png';
+            else if (base64.indexOf('UklGR') === 0) mime = 'image/webp';
+            img.src = 'data:' + mime + ';base64,' + base64;
           } catch (e) {
+            clearTimeout(timer);
             resolve(base64);
           }
         });
       }
     };
     window._sealandxStorage.init();
+
+    // Clear stale service worker caches to ensure immediate updates
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(regs) {
+        for (var r of regs) { r.unregister(); }
+      });
+    }
   </script>
-  <script src="flutter_bootstrap.js" async></script>
+  <script src="flutter_bootstrap.js?v=2" async></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show ByteData, rootBundle;
 import 'package:flutter/material.dart';
@@ -19,6 +20,7 @@ class FolderManager {
   static const String _baseFolderName = 'LCLScans';
   static SharedPreferences? _prefs;
   static final Map<String, Uint8List> _webInMemoryImages = {};
+  static int _uniqueCounter = 0;
 
   static Future<SharedPreferences> get prefs async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -303,26 +305,97 @@ class FolderManager {
     }
   }
 
+  /// Saves a batch of images INSTANTLY in parallel with guaranteed unique keys.
+  static Future<List<File>> saveMultipleImagesXFile(
+    Directory outerDir,
+    List<XFile> xFiles, {
+    required String category,
+  }) async {
+    if (xFiles.isEmpty) return [];
+    final folderPath = outerDir.path;
+
+    if (kIsWeb) {
+      final sp = await prefs;
+      final listKey = 'web_imgs_${folderPath}_$category';
+      List<String> imgKeys = sp.getStringList(listKey) ?? [];
+      final List<File> savedFiles = [];
+      final List<String> newKeys = [];
+
+      // 1. Read all files in parallel for maximum speed
+      final results = await Future.wait(xFiles.map((xFile) async {
+        final uniqueId = '${DateTime.now().microsecondsSinceEpoch}_${_uniqueCounter++}';
+        final imageKey = 'web_img_${folderPath}_${category}_$uniqueId';
+        final bytes = await xFile.readAsBytes();
+        return MapEntry(imageKey, bytes);
+      }));
+
+      // 2. Put immediately into memory cache and trigger background persistent save
+      for (final entry in results) {
+        final imageKey = entry.key;
+        final bytes = entry.value;
+
+        // Instant in-memory cache
+        _webInMemoryImages[imageKey] = bytes;
+
+        // Save into IndexedDB in background without freezing UI
+        unawaited(WebImageStorage.instance.saveImage(imageKey, bytes));
+
+        newKeys.add(imageKey);
+        savedFiles.add(File(imageKey));
+      }
+
+      // 3. Update the folder keys list once with all images!
+      try {
+        for (final k in newKeys) {
+          if (!imgKeys.contains(k)) {
+            imgKeys.add(k);
+          }
+        }
+        await sp.setStringList(listKey, imgKeys);
+      } catch (e) {
+        debugPrint('Web update image keys batch error: $e');
+      }
+
+      return savedFiles;
+    }
+
+    final innerDir = getInnerDirectory(outerDir);
+    final categoryDir = Directory(p.join(innerDir.path, category));
+    if (!await categoryDir.exists()) {
+      await categoryDir.create(recursive: true);
+    }
+
+    final List<File> savedFiles = [];
+    await Future.wait(xFiles.map((xFile) async {
+      final uniqueId = '${DateTime.now().microsecondsSinceEpoch}_${_uniqueCounter++}';
+      final fileName = 'IMG_$uniqueId.jpg';
+      final targetPath = p.join(categoryDir.path, fileName);
+      final bytes = await xFile.readAsBytes();
+      final savedFile = File(targetPath);
+      await savedFile.writeAsBytes(bytes);
+      savedFiles.add(savedFile);
+    }));
+
+    return savedFiles;
+  }
+
   /// Saves a new image from XFile INSTANTLY.
   static Future<File> saveImageXFile(Directory outerDir, XFile xFile, {required String category}) async {
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final uniqueId = '${DateTime.now().microsecondsSinceEpoch}_${_uniqueCounter++}';
     final folderPath = outerDir.path;
     final bytes = await xFile.readAsBytes();
 
     if (kIsWeb) {
       final sp = await prefs;
-      final imageKey = 'web_img_${folderPath}_${category}_$timestamp';
+      final imageKey = 'web_img_${folderPath}_${category}_$uniqueId';
       
-      // 1. Compress image on Web using Canvas (drastically reduces memory & storage)
-      final compressedBytes = await WebImageStorage.instance.compressImage(bytes);
+      // Store in memory cache instantly
+      _webInMemoryImages[imageKey] = bytes;
 
-      // 2. Store in high-performance memory cache
-      _webInMemoryImages[imageKey] = compressedBytes;
+      // Save into IndexedDB in background
+      unawaited(WebImageStorage.instance.saveImage(imageKey, bytes));
 
-      // 3. Save into IndexedDB (virtually unlimited quota, never blocks or exceeds localStorage)
-      await WebImageStorage.instance.saveImage(imageKey, compressedBytes);
-
-      // 4. Safely register key in folder list
+      // Safely register key in folder list
       try {
         final listKey = 'web_imgs_${folderPath}_$category';
         List<String> imgKeys = sp.getStringList(listKey) ?? [];
@@ -343,7 +416,7 @@ class FolderManager {
       await categoryDir.create(recursive: true);
     }
 
-    final fileName = 'IMG_$timestamp.jpg';
+    final fileName = 'IMG_$uniqueId.jpg';
     final targetPath = p.join(categoryDir.path, fileName);
 
     final savedFile = File(targetPath);
@@ -353,12 +426,12 @@ class FolderManager {
 
   /// Saves a new image file.
   static Future<File> saveImageToFolder(Directory outerDir, File tempFile, {required String category}) async {
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final uniqueId = '${DateTime.now().microsecondsSinceEpoch}_${_uniqueCounter++}';
 
     if (kIsWeb) {
       final sp = await prefs;
       final folderPath = outerDir.path;
-      final imageKey = 'web_img_${folderPath}_${category}_$timestamp';
+      final imageKey = 'web_img_${folderPath}_${category}_$uniqueId';
 
       Uint8List bytes;
       if (tempFile.path.startsWith('data:')) {
@@ -391,7 +464,7 @@ class FolderManager {
       await categoryDir.create(recursive: true);
     }
 
-    final fileName = 'IMG_$timestamp.jpg';
+    final fileName = 'IMG_$uniqueId.jpg';
     final targetPath = p.join(categoryDir.path, fileName);
 
     final savedFile = await tempFile.copy(targetPath);

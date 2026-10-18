@@ -44,8 +44,12 @@ if (!window._sealandxStorage) {
           var keysToRemove = [];
           for (var i = 0; i < localStorage.length; i++) {
             var k = localStorage.key(i);
-            if (k && k.indexOf('web_img_') === 0) {
-              keysToRemove.push(k);
+            // Protect image lists (web_imgs_)!
+            if (k && k.indexOf('web_img_') === 0 && k.indexOf('web_imgs_') !== 0) {
+              var val = localStorage.getItem(k);
+              if (val && val.length > 500) {
+                keysToRemove.push(k);
+              }
             }
           }
           for (var j = 0; j < keysToRemove.length; j++) {
