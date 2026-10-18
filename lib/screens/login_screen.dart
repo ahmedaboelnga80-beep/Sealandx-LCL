@@ -7,6 +7,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'folder_list_screen.dart';
+import '../windows_desktop/windows_desktop_shell.dart';
 
 class AccountWrapper extends StatefulWidget {
   const AccountWrapper({super.key});
@@ -18,6 +19,7 @@ class AccountWrapper extends StatefulWidget {
 class _AccountWrapperState extends State<AccountWrapper> {
   bool _isLoggedIn = false;
   bool _isLoading = true;
+  bool _isDesktopMode = false;
   final TextEditingController _emailController = TextEditingController();
 
   // The Google Apps Script URL linked to your users list sheet
@@ -270,8 +272,25 @@ class _AccountWrapperState extends State<AccountWrapper> {
       );
     }
 
+    if (_isDesktopMode) {
+      return WindowsDesktopShell(
+        onToggleStandardView: () {
+          setState(() {
+            _isDesktopMode = false;
+          });
+        },
+      );
+    }
+
     if (_isLoggedIn) {
-      return FolderListScreen(onLogout: _logout);
+      return FolderListScreen(
+        onLogout: _logout,
+        onToggleDesktopMode: () {
+          setState(() {
+            _isDesktopMode = true;
+          });
+        },
+      );
     }
 
     return Scaffold(
@@ -340,10 +359,10 @@ class _AccountWrapperState extends State<AccountWrapper> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
-                      height: 55,
+                      height: 50,
                       child: ElevatedButton(
                         onPressed: _handleLogin,
                         style: ElevatedButton.styleFrom(
@@ -355,11 +374,33 @@ class _AccountWrapperState extends State<AccountWrapper> {
                         ),
                         child: const Text(
                           'دخول النظام',
-                          style: TextStyle(fontSize: 18, fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+                          style: TextStyle(fontSize: 17, fontFamily: 'Cairo', fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 14),
+                    // Windows 11 Desktop Mode Toggle Button
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _isDesktopMode = true;
+                        });
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF80CBC4),
+                        side: const BorderSide(color: Color(0xFF009688)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      ),
+                      icon: const Icon(Icons.desktop_windows, size: 20),
+                      label: const Text(
+                        'تشغيل نمط سطح مكتب الويندوز (Windows 11 UI)',
+                        style: TextStyle(fontFamily: 'Cairo', fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
                     const Text(
                       'SealandX Cloud Security v2.0',
                       style: TextStyle(color: Colors.white30, fontSize: 11),

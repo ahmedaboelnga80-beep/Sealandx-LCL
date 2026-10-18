@@ -38,19 +38,24 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     _loadImages();
   }
 
-  void _loadImages() {
+  void _loadImages() async {
     setState(() => _isLoading = true);
     try {
+      if (kIsWeb) {
+        await FolderManager.preloadImages(widget.folderDirectory);
+      }
       final yardList = FolderManager.getImages(widget.folderDirectory, category: 'yard');
       final cargoList = FolderManager.getImages(widget.folderDirectory, category: 'cargo');
-      setState(() {
-        _yardImages = yardList;
-        _cargoImages = cargoList;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _yardImages = yardList;
+          _cargoImages = cargoList;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       debugPrint('Error loading images: $e');
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -77,9 +82,9 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       final ImagePicker picker = ImagePicker();
       final XFile? photo = await picker.pickImage(
         source: ImageSource.camera,
-        maxWidth: 1024,
-        maxHeight: 1024,
-        imageQuality: 75,
+        maxWidth: 1280,
+        maxHeight: 1280,
+        imageQuality: 80,
       );
       if (photo != null) {
         setState(() => _isLoading = true);
@@ -94,6 +99,8 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
           SnackBar(content: Text('خطأ أثناء التقاط الصورة: $e', style: const TextStyle(fontFamily: 'Cairo'))),
         );
       }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -101,9 +108,9 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     try {
       final ImagePicker picker = ImagePicker();
       final List<XFile> rawImages = await picker.pickMultiImage(
-        maxWidth: 1024,
-        maxHeight: 1024,
-        imageQuality: 75,
+        maxWidth: 1280,
+        maxHeight: 1280,
+        imageQuality: 80,
       );
       
       if (rawImages.isNotEmpty) {
@@ -116,9 +123,13 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       }
     } catch (e) {
       debugPrint('Error picking from gallery: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ أثناء اختيار الصور: $e', style: const TextStyle(fontFamily: 'Cairo'))),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ أثناء اختيار الصور: $e', style: const TextStyle(fontFamily: 'Cairo'))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -172,10 +183,9 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 
     if (confirm == true) {
       setState(() => _isLoading = true);
+      final category = _currentSubTabIndex == 0 ? 'yard' : 'cargo';
       for (var img in _selectedImages) {
-        if (await img.exists()) {
-          await img.delete();
-        }
+        await FolderManager.deleteImage(widget.folderDirectory, img.path, category: category);
       }
       _clearSelection();
       _loadImages();
@@ -201,7 +211,11 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ImagePreviewScreen(imageFile: image),
+        builder: (context) => ImagePreviewScreen(
+          imageFile: image,
+          folderDirectory: widget.folderDirectory,
+          category: _currentSubTabIndex == 0 ? 'yard' : 'cargo',
+        ),
       ),
     ).then((_) => _loadImages());
   }
@@ -564,8 +578,15 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 // -------------------- SIMPLE PREVIEW SCREEN --------------------
 class ImagePreviewScreen extends StatefulWidget {
   final File imageFile;
+  final Directory folderDirectory;
+  final String category;
 
-  const ImagePreviewScreen({super.key, required this.imageFile});
+  const ImagePreviewScreen({
+    super.key,
+    required this.imageFile,
+    required this.folderDirectory,
+    required this.category,
+  });
 
   @override
   State<ImagePreviewScreen> createState() => _ImagePreviewScreenState();
@@ -623,9 +644,7 @@ class _ImagePreviewScreenState extends State<ImagePreviewScreen> {
     );
 
     if (confirm == true) {
-      if (await _currentFile.exists()) {
-        await _currentFile.delete();
-      }
+      await FolderManager.deleteImage(widget.folderDirectory, _currentFile.path, category: widget.category);
       if (mounted) Navigator.pop(context);
     }
   }

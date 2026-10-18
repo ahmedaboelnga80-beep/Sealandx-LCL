@@ -13,6 +13,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'web_storage/web_image_storage.dart';
 
 class FolderManager {
   static const String _baseFolderName = 'LCLScans';
@@ -26,6 +27,9 @@ class FolderManager {
 
   static Future<void> init() async {
     _prefs ??= await SharedPreferences.getInstance();
+    if (kIsWeb) {
+      await WebImageStorage.instance.init();
+    }
   }
 
   static bool get _isFirebaseAvailable {
@@ -243,15 +247,59 @@ class FolderManager {
       return _webInMemoryImages[imageKey];
     }
 
-    if (_prefs == null) return null;
-    final base64Str = _prefs!.getString(imageKey);
-    if (base64Str == null) return null;
+    // Check legacy _prefs, decode once, and migrate
+    if (_prefs != null) {
+      final base64Str = _prefs!.getString(imageKey);
+      if (base64Str != null) {
+        try {
+          final bytes = base64Decode(base64Str);
+          _webInMemoryImages[imageKey] = bytes;
+          if (kIsWeb) {
+            WebImageStorage.instance.saveImage(imageKey, bytes);
+            _prefs!.remove(imageKey); // Free up localStorage quota!
+          }
+          return bytes;
+        } catch (_) {}
+      }
+    }
+    return null;
+  }
+
+  /// Asynchronously retrieves image bytes from IndexedDB if not cached in memory.
+  static Future<Uint8List?> getWebImageBytesAsync(String imageKey) async {
+    if (_webInMemoryImages.containsKey(imageKey)) {
+      return _webInMemoryImages[imageKey];
+    }
+    if (kIsWeb) {
+      final bytes = await WebImageStorage.instance.getImage(imageKey);
+      if (bytes != null) {
+        _webInMemoryImages[imageKey] = bytes;
+        return bytes;
+      }
+    }
+    return getWebImageBytes(imageKey);
+  }
+
+  /// Preloads all images for a folder into memory on Web
+  static Future<void> preloadImages(Directory outerDir) async {
+    if (!kIsWeb) return;
     try {
-      final bytes = base64Decode(base64Str);
-      _webInMemoryImages[imageKey] = bytes;
-      return bytes;
-    } catch (_) {
-      return null;
+      final sp = await prefs;
+      final folderPath = outerDir.path;
+      final yardKeys = sp.getStringList('web_imgs_${folderPath}_yard') ?? [];
+      final cargoKeys = sp.getStringList('web_imgs_${folderPath}_cargo') ?? [];
+      final allKeys = [...yardKeys, ...cargoKeys];
+
+      for (final key in allKeys) {
+        if (!_webInMemoryImages.containsKey(key)) {
+          final bytes = await WebImageStorage.instance.getImage(key);
+          if (bytes != null) {
+            _webInMemoryImages[key] = bytes;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error preloading images on web: $e');
     }
   }
 
@@ -265,22 +313,25 @@ class FolderManager {
       final sp = await prefs;
       final imageKey = 'web_img_${folderPath}_${category}_$timestamp';
       
-      // Store in high-performance memory cache
-      _webInMemoryImages[imageKey] = bytes;
+      // 1. Compress image on Web using Canvas (drastically reduces memory & storage)
+      final compressedBytes = await WebImageStorage.instance.compressImage(bytes);
 
-      final listKey = 'web_imgs_${folderPath}_$category';
-      List<String> imgKeys = sp.getStringList(listKey) ?? [];
-      if (!imgKeys.contains(imageKey)) {
-        imgKeys.add(imageKey);
-        await sp.setStringList(listKey, imgKeys);
-      }
+      // 2. Store in high-performance memory cache
+      _webInMemoryImages[imageKey] = compressedBytes;
 
-      // Try storing in LocalStorage asynchronously
+      // 3. Save into IndexedDB (virtually unlimited quota, never blocks or exceeds localStorage)
+      await WebImageStorage.instance.saveImage(imageKey, compressedBytes);
+
+      // 4. Safely register key in folder list
       try {
-        final base64Str = base64Encode(bytes);
-        await sp.setString(imageKey, base64Str);
+        final listKey = 'web_imgs_${folderPath}_$category';
+        List<String> imgKeys = sp.getStringList(listKey) ?? [];
+        if (!imgKeys.contains(imageKey)) {
+          imgKeys.add(imageKey);
+          await sp.setStringList(listKey, imgKeys);
+        }
       } catch (e) {
-        debugPrint('Web local storage quota exceeded, saved in memory: $e');
+        debugPrint('Web update image keys error: $e');
       }
 
       return File(imageKey);
@@ -316,20 +367,19 @@ class FolderManager {
         bytes = await tempFile.readAsBytes();
       }
 
-      _webInMemoryImages[imageKey] = bytes;
-
-      final listKey = 'web_imgs_${folderPath}_$category';
-      List<String> imgKeys = sp.getStringList(listKey) ?? [];
-      if (!imgKeys.contains(imageKey)) {
-        imgKeys.add(imageKey);
-        await sp.setStringList(listKey, imgKeys);
-      }
+      final compressedBytes = await WebImageStorage.instance.compressImage(bytes);
+      _webInMemoryImages[imageKey] = compressedBytes;
+      await WebImageStorage.instance.saveImage(imageKey, compressedBytes);
 
       try {
-        final base64Str = base64Encode(bytes);
-        await sp.setString(imageKey, base64Str);
+        final listKey = 'web_imgs_${folderPath}_$category';
+        List<String> imgKeys = sp.getStringList(listKey) ?? [];
+        if (!imgKeys.contains(imageKey)) {
+          imgKeys.add(imageKey);
+          await sp.setStringList(listKey, imgKeys);
+        }
       } catch (e) {
-        debugPrint('Web local storage quota exceeded, saved in memory: $e');
+        debugPrint('Web update image keys error: $e');
       }
 
       return File(imageKey);
@@ -348,15 +398,57 @@ class FolderManager {
     return savedFile;
   }
 
+  /// Deletes an image from disk or Web IndexedDB.
+  static Future<void> deleteImage(Directory outerDir, String imagePath, {required String category}) async {
+    if (kIsWeb) {
+      _webInMemoryImages.remove(imagePath);
+      await WebImageStorage.instance.deleteImage(imagePath);
+
+      try {
+        final sp = await prefs;
+        final listKey = 'web_imgs_${outerDir.path}_$category';
+        List<String> imgKeys = sp.getStringList(listKey) ?? [];
+        if (imgKeys.contains(imagePath)) {
+          imgKeys.remove(imagePath);
+          await sp.setStringList(listKey, imgKeys);
+        }
+      } catch (e) {
+        debugPrint('Error updating keys after image delete: $e');
+      }
+      return;
+    }
+
+    try {
+      final file = File(imagePath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (e) {
+      debugPrint('Error deleting native file: $e');
+    }
+  }
+
   /// Deletes the folder.
   static Future<void> deleteFolder(Directory outerDir) async {
     if (kIsWeb) {
       final sp = await prefs;
-      final String? jsonStr = sp.getString('web_folders_store');
-      if (jsonStr != null) {
-        List<dynamic> list = json.decode(jsonStr);
-        list.removeWhere((item) => item['path'] == outerDir.path);
-        await sp.setString('web_folders_store', json.encode(list));
+      final folderPath = outerDir.path;
+
+      await WebImageStorage.instance.deleteImagesForFolder(folderPath);
+      _webInMemoryImages.removeWhere((key, _) => key.contains(folderPath));
+
+      try {
+        await sp.remove('web_imgs_${folderPath}_yard');
+        await sp.remove('web_imgs_${folderPath}_cargo');
+
+        final String? jsonStr = sp.getString('web_folders_store');
+        if (jsonStr != null) {
+          List<dynamic> list = json.decode(jsonStr);
+          list.removeWhere((item) => item['path'] == folderPath);
+          await sp.setString('web_folders_store', json.encode(list));
+        }
+      } catch (e) {
+        debugPrint('Error deleting folder on web: $e');
       }
       return;
     }

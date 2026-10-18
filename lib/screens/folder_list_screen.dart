@@ -7,7 +7,8 @@ import 'folder_detail_screen.dart';
 
 class FolderListScreen extends StatefulWidget {
   final VoidCallback? onLogout;
-  const FolderListScreen({super.key, this.onLogout});
+  final VoidCallback? onToggleDesktopMode;
+  const FolderListScreen({super.key, this.onLogout, this.onToggleDesktopMode});
 
   @override
   State<FolderListScreen> createState() => _FolderListScreenState();
@@ -504,6 +505,12 @@ class _FolderListScreenState extends State<FolderListScreen> {
           backgroundColor: const Color(0xFF004D40),
           foregroundColor: Colors.white,
           actions: [
+            if (widget.onToggleDesktopMode != null)
+              IconButton(
+                icon: const Icon(Icons.desktop_windows, color: Color(0xFF80CBC4)),
+                tooltip: 'نمط سطح مكتب الويندوز (Windows 11 Mode)',
+                onPressed: widget.onToggleDesktopMode,
+              ),
             if (widget.onLogout != null)
               IconButton(
                 icon: const Icon(Icons.logout, color: Colors.redAccent),

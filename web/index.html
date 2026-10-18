@@ -33,6 +33,164 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <script>
+    window._sealandxStorage = {
+      db: null,
+      init: function() {
+        return new Promise(function(resolve) {
+          try {
+            var keysToRemove = [];
+            for (var i = 0; i < localStorage.length; i++) {
+              var k = localStorage.key(i);
+              if (k && k.indexOf('web_img_') === 0) {
+                keysToRemove.push(k);
+              }
+            }
+            for (var j = 0; j < keysToRemove.length; j++) {
+              localStorage.removeItem(keysToRemove[j]);
+            }
+            if (keysToRemove.length > 0) {
+              console.log('[SealandX] Cleared ' + keysToRemove.length + ' bloated base64 keys from localStorage.');
+            }
+
+            var req = indexedDB.open('sealandx_images_db', 1);
+            req.onupgradeneeded = function(e) {
+              var db = e.target.result;
+              if (!db.objectStoreNames.contains('images')) {
+                db.createObjectStore('images');
+              }
+            };
+            req.onsuccess = function(e) {
+              window._sealandxStorage.db = e.target.result;
+              resolve(true);
+            };
+            req.onerror = function(e) {
+              console.warn('[SealandX] IndexedDB open error:', e);
+              resolve(false);
+            };
+          } catch (err) {
+            console.warn('[SealandX] Init error:', err);
+            resolve(false);
+          }
+        });
+      },
+      saveImage: function(key, base64) {
+        return new Promise(function(resolve) {
+          try {
+            var db = window._sealandxStorage.db;
+            if (!db) { resolve(false); return; }
+            var tx = db.transaction(['images'], 'readwrite');
+            var store = tx.objectStore('images');
+            var req = store.put(base64, key);
+            req.onsuccess = function() { resolve(true); };
+            req.onerror = function() { resolve(false); };
+          } catch (e) {
+            resolve(false);
+          }
+        });
+      },
+      getImage: function(key) {
+        return new Promise(function(resolve) {
+          try {
+            var db = window._sealandxStorage.db;
+            if (!db) { resolve(null); return; }
+            var tx = db.transaction(['images'], 'readonly');
+            var store = tx.objectStore('images');
+            var req = store.get(key);
+            req.onsuccess = function(e) {
+              resolve(e.target.result || null);
+            };
+            req.onerror = function() { resolve(null); };
+          } catch (e) {
+            resolve(null);
+          }
+        });
+      },
+      deleteImage: function(key) {
+        return new Promise(function(resolve) {
+          try {
+            var db = window._sealandxStorage.db;
+            if (!db) { resolve(false); return; }
+            var tx = db.transaction(['images'], 'readwrite');
+            var store = tx.objectStore('images');
+            var req = store.delete(key);
+            req.onsuccess = function() { resolve(true); };
+            req.onerror = function() { resolve(false); };
+          } catch (e) {
+            resolve(false);
+          }
+        });
+      },
+      deleteImagesForFolder: function(prefix) {
+        return new Promise(function(resolve) {
+          try {
+            var db = window._sealandxStorage.db;
+            if (!db) { resolve(false); return; }
+            var tx = db.transaction(['images'], 'readwrite');
+            var store = tx.objectStore('images');
+            var req = store.openCursor();
+            req.onsuccess = function(e) {
+              var cursor = e.target.result;
+              if (cursor) {
+                if (typeof cursor.key === 'string' && cursor.key.indexOf(prefix) !== -1) {
+                  cursor.delete();
+                }
+                cursor.continue();
+              } else {
+                resolve(true);
+              }
+            };
+            req.onerror = function() { resolve(false); };
+          } catch (e) {
+            resolve(false);
+          }
+        });
+      },
+      compressImage: function(base64, maxDimension, quality) {
+        return new Promise(function(resolve) {
+          try {
+            var img = new Image();
+            img.onload = function() {
+              var width = img.naturalWidth || img.width;
+              var height = img.naturalHeight || img.height;
+              if (!width || !height) {
+                resolve(base64);
+                return;
+              }
+              if (width <= maxDimension && height <= maxDimension && base64.length < 400000) {
+                resolve(base64);
+                return;
+              }
+              if (width > maxDimension || height > maxDimension) {
+                if (width > height) {
+                  height = Math.round((height * maxDimension) / width);
+                  width = maxDimension;
+                } else {
+                  width = Math.round((width * maxDimension) / height);
+                  height = maxDimension;
+                }
+              }
+              var canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              var ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, width, height);
+              var result = canvas.toDataUrl('image/jpeg', quality || 0.75);
+              var comma = result.indexOf(',');
+              resolve(comma !== -1 ? result.substring(comma + 1) : result);
+            };
+            img.onerror = function() {
+              resolve(base64);
+            };
+            img.src = 'data:image/jpeg;base64,' + base64;
+          } catch (e) {
+            resolve(base64);
+          }
+        });
+      }
+    };
+    window._sealandxStorage.init();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

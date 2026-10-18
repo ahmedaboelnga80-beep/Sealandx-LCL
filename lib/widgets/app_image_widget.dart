@@ -54,6 +54,35 @@ class AppImageWidget extends StatelessWidget {
       if (bytes != null && bytes.isNotEmpty) {
         return Image.memory(bytes, fit: fit);
       }
+      return FutureBuilder<Uint8List?>(
+        future: FolderManager.getWebImageBytesAsync(path),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.done && snapshot.data != null && snapshot.data!.isNotEmpty) {
+            return Image.memory(snapshot.data!, fit: fit);
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Container(
+              color: Colors.black26,
+              child: const Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    color: Color(0xFF009688),
+                    strokeWidth: 2,
+                  ),
+                ),
+              ),
+            );
+          }
+          return Container(
+            color: Colors.black26,
+            child: const Center(
+              child: Icon(Icons.broken_image, color: Colors.white38),
+            ),
+          );
+        },
+      );
     }
 
     return Image.file(file, fit: fit);
